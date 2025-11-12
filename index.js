@@ -44,8 +44,8 @@ const httpServer = http.createServer((req, res) => {
         });
         return;
   } else if (req.url === `/${SUB_PATH}`) {
-    const vlessURL = `vless://${UUID}@${DOMAIN}:443?encryption=none&security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;
-    const trojanURL = `trojan://${UUID}@${DOMAIN}:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;  // 使用UUID而不是TROJAN_PASSWORD
+    const vlessURL = `vless://${uuid}@${DOMAIN}:443?encryption=none&security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;
+    const trojanURL = `trojan://${uuid}@${DOMAIN}:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;  // 使用去掉短横线的UUID
     const combinedContent = `${vlessURL}\n${trojanURL}`;
     const base64Content = Buffer.from(combinedContent).toString('base64');
     res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -62,7 +62,9 @@ const DNS_SERVERS = ['8.8.4.4', '1.1.1.1'];
 // Custom DNS resolver function
 function resolveHost(host) {
   return new Promise((resolve, reject) => {
+    console.log("Resolving host:", host);
     if (/^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/.test(host)) {
+      console.log("Host is already an IP address:", host);
       resolve(host);
       return;
     }
@@ -71,6 +73,7 @@ function resolveHost(host) {
     
     function tryNextDNS() {
       if (attempts >= DNS_SERVERS.length) {
+        console.log("All DNS servers failed, using system DNS");
         reject(new Error(`Failed to resolve ${host} with all DNS servers`));
         return;
       }
@@ -78,6 +81,7 @@ function resolveHost(host) {
       const dnsServer = DNS_SERVERS[attempts];
       attempts++;
       const dnsQuery = `https://dns.google/resolve?name=${encodeURIComponent(host)}&type=A`;
+      console.log("Trying DNS server:", dnsServer);
       axios.get(dnsQuery, {
         timeout: 5000,
         headers: {
@@ -86,16 +90,20 @@ function resolveHost(host) {
       })
       .then(response => {
         const data = response.data;
+        console.log("DNS response:", JSON.stringify(data, null, 2));
         if (data.Status === 0 && data.Answer && data.Answer.length > 0) {
           const ip = data.Answer.find(record => record.type === 1);
           if (ip) {
+            console.log("Resolved host to IP:", host, "->", ip.data);
             resolve(ip.data);
             return;
           }
         }
+        console.log("DNS server returned no valid result, trying next");
         tryNextDNS();
       })
       .catch(error => {
+        console.log("DNS server failed, trying next:", dnsServer, error.message);
         // console.warn(`DNS resolution failed with ${dnsServer}:`, error.message);
         tryNextDNS();
       });
@@ -106,14 +114,18 @@ function resolveHost(host) {
 }
 
 wss.on('connection', ws => {
+  console.log("WebSocket connected");
   // console.log("Connected successfully");
   ws.once('message', msg => {
+    console.log("Received message, length:", msg.length);
     if (msg.length >= 58 && msg[56] === 0x0d && msg[57] === 0x0a) {
+      console.log("Handling as Trojan protocol");
       handleTrojanProtocol(ws, msg).catch(error => {
         console.error('Error handling Trojan protocol:', error);
         ws.close();
       });
     } else {
+      console.log("Handling as VLESS protocol");
       const [VERSION] = msg;
       const id = msg.slice(1, 17);
       if (!id.every((v, i) => v == parseInt(uuid.substr(i * 2, 2), 16))) return;
@@ -224,7 +236,7 @@ function rightRotate(value, amount) {
 
 async function handleTrojanProtocol(ws, msg) {
   const receivedHashHex = msg.slice(0, 56).toString();  // 获取客户端发送的十六进制字符串
-  const expectedHashHex = await sha224(UUID);  // 获取我们计算的十六进制哈希
+  const expectedHashHex = await sha224(uuid);  // 获取我们计算的十六进制哈希，使用去掉短横线的UUID
   
   // 添加调试日志
   console.log('Trojan password verification:');
@@ -275,7 +287,7 @@ async function handleTrojanProtocol(ws, msg) {
   
   console.log('  Port:', port);
   
-  // 跳过最后的CRLF
+  // 跳过最后的CRLF分隔符（在实际数据之前）
   i += 2;
   
   console.log('  Data start index:', i);
