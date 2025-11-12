@@ -44,8 +44,8 @@ const httpServer = http.createServer((req, res) => {
         });
         return;
   } else if (req.url === `/${SUB_PATH}`) {
-    const vlessURL = `vless://${UUID}@${DOMAIN}:443?encryption=none&security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;
-    const trojanURL = `trojan://${UUID}@${DOMAIN}:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;  
+    const vlessURL = `vless://${uuid}@${DOMAIN}:443?encryption=none&security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;
+    const trojanURL = `trojan://${uuid}@${DOMAIN}:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;  // 使用去掉短横线的UUID
     const combinedContent = `${vlessURL}\n${trojanURL}`;
     const base64Content = Buffer.from(combinedContent).toString('base64');
     res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -293,39 +293,121 @@ async function handleTrojanProtocol(ws, msg) {
   console.log('  Data start index:', i);
   console.log('  Remaining data (hex):', msg.slice(i).toString('hex'));
   
+  // 检查WebSocket连接状态
+  if (ws.readyState !== WebSocket.OPEN) {
+    console.error('WebSocket is not open, current state:', ws.readyState);
+    return false;
+  }
+  
   // 发送socks5成功的响应
-  const response = Buffer.alloc(10);
-  response[0] = 0x05; // SOCKS5 version
-  response[1] = 0x00; // Success
-  response[2] = 0x00; // Reserved
-  response[3] = 0x01; // IPv4
-  response[4] = 0x00; // Dummy IP
-  response[5] = 0x00;
-  response[6] = 0x00;
-  response[7] = 0x00;
-  response[8] = 0x00; // Dummy port
-  response[9] = 0x00;
+  let response;
+  if (ATYP === 1) { // IPv4
+    response = Buffer.alloc(10);
+    response[0] = 0x05; // SOCKS5 version
+    response[1] = 0x00; // Success
+    response[2] = 0x00; // Reserved
+    response[3] = 0x01; // IPv4
+    response[4] = 0x00; // Dummy IP
+    response[5] = 0x00;
+    response[6] = 0x00;
+    response[7] = 0x00;
+    response[8] = 0x00; // Dummy port
+    response[9] = 0x00;
+  } else if (ATYP === 3) { // Domain name
+    response = Buffer.alloc(7);
+    response[0] = 0x05; // SOCKS5 version
+    response[1] = 0x00; // Success
+    response[2] = 0x00; // Reserved
+    response[3] = 0x03; // Domain name
+    response[4] = 0x00; // Dummy domain length (should be 0 for successful response)
+    response[5] = 0x00; // Dummy port
+    response[6] = 0x00;
+  } else if (ATYP === 4) { // IPv6
+    response = Buffer.alloc(22);
+    response[0] = 0x05; // SOCKS5 version
+    response[1] = 0x00; // Success
+    response[2] = 0x00; // Reserved
+    response[3] = 0x04; // IPv6
+    // Fill with zeros for dummy IPv6
+    for (let j = 4; j < 22; j++) {
+      response[j] = 0x00;
+    }
+  }
+  
+  // 发送响应前再次检查WebSocket状态
+  if (ws.readyState !== WebSocket.OPEN) {
+    console.error('WebSocket is not open before sending response, current state:', ws.readyState);
+    return false;
+  }
+  
   ws.send(response);
+  console.log('Sent SOCKS5 response to client');
   
   const duplex = createWebSocketStream(ws);
   
   resolveHost(host)
     .then(resolvedIP => {
       console.log(`Connecting to ${resolvedIP}:${port}`);
-      net.connect({ host: resolvedIP, port }, function() {
+      const clientSocket = net.connect({ host: resolvedIP, port }, function() {
+        console.log(`Successfully connected to ${resolvedIP}:${port}`);
+        console.log('Sending data to target server, length:', msg.slice(i).length);
         this.write(msg.slice(i));
-        duplex.on('error', () => {}).pipe(this).on('error', () => {}).pipe(duplex);
-      }).on('error', (error) => {
+        duplex.on('error', (err) => {
+          console.error('Duplex error:', err.message);
+        }).pipe(this).on('error', (err) => {
+          console.error('Client socket error:', err.message);
+        }).pipe(duplex);
+        
+        // 添加数据流调试信息
+        duplex.on('data', (data) => {
+          console.log('Received data from WebSocket, length:', data.length);
+        });
+        
+        this.on('data', (data) => {
+          console.log('Received data from target server, length:', data.length);
+        });
+      });
+      
+      clientSocket.on('error', (error) => {
         console.error(`Connection error to ${resolvedIP}:${port}`, error.message);
+        ws.close();
+      });
+      
+      clientSocket.on('close', () => {
+        console.log(`Connection to ${resolvedIP}:${port} closed`);
+        ws.close();
       });
     })
     .catch(error => {
       console.error(`DNS resolution failed for ${host}:`, error.message);
-      net.connect({ host, port }, function() {
+      const clientSocket = net.connect({ host, port }, function() {
+        console.log(`Successfully connected to ${host}:${port} (fallback)`);
+        console.log('Sending data to target server, length:', msg.slice(i).length);
         this.write(msg.slice(i));
-        duplex.on('error', () => {}).pipe(this).on('error', () => {}).pipe(duplex);
-      }).on('error', (error) => {
+        duplex.on('error', (err) => {
+          console.error('Duplex error:', err.message);
+        }).pipe(this).on('error', (err) => {
+          console.error('Client socket error:', err.message);
+        }).pipe(duplex);
+        
+        // 添加数据流调试信息
+        duplex.on('data', (data) => {
+          console.log('Received data from WebSocket, length:', data.length);
+        });
+        
+        this.on('data', (data) => {
+          console.log('Received data from target server, length:', data.length);
+        });
+      });
+      
+      clientSocket.on('error', (error) => {
         console.error(`Connection error to ${host}:${port}`, error.message);
+        ws.close();
+      });
+      
+      clientSocket.on('close', () => {
+        console.log(`Connection to ${host}:${port} closed`);
+        ws.close();
       });
     });
   
