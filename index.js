@@ -45,7 +45,7 @@ const httpServer = http.createServer((req, res) => {
         return;
   } else if (req.url === `/${SUB_PATH}`) {
     const vlessURL = `vless://${UUID}@${DOMAIN}:443?encryption=none&security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;
-    const trojanURL = `trojan://${UUID}@${DOMAIN}:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;
+    const trojanURL = `trojan://${UUID}@${DOMAIN}:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;  // 使用UUID而不是TROJAN_PASSWORD
     const combinedContent = `${vlessURL}\n${trojanURL}`;
     const base64Content = Buffer.from(combinedContent).toString('base64');
     res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -108,7 +108,7 @@ function resolveHost(host) {
 wss.on('connection', ws => {
   // console.log("Connected successfully");
   ws.once('message', msg => {
-    if (msg.length >= 58 && msg.slice(56, 58).equals(Buffer.from([0x0d, 0x0a]))) {
+    if (msg.length >= 58 && msg[56] === 0x0d && msg[57] === 0x0a) {
       handleTrojanProtocol(ws, msg).catch(error => {
         console.error('Error handling Trojan protocol:', error);
         ws.close();
@@ -128,7 +128,7 @@ wss.on('connection', ws => {
       const duplex = createWebSocketStream(ws);
       resolveHost(host)
         .then(resolvedIP => {
-          // console.log(`Resolved ${host} to ${resolvedIP} using custom DNS`);s
+          // console.log(`Resolved ${host} to ${resolvedIP} using custom DNS`);
           net.connect({ host: resolvedIP, port }, function() {
             this.write(msg.slice(i));
             duplex.on('error', () => {}).pipe(this).on('error', () => {}).pipe(duplex);
@@ -207,7 +207,7 @@ async function sha224(text) {
   }
   
   const result = [];
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < 7; i++) {  // SHA-224 uses only the first 7 words (28 bytes)
     result.push(
       ((H[i] >>> 24) & 0xff).toString(16).padStart(2, '0'),
       ((H[i] >>> 16) & 0xff).toString(16).padStart(2, '0'),
@@ -215,7 +215,7 @@ async function sha224(text) {
       (H[i] & 0xff).toString(16).padStart(2, '0')
     );
   }
-  return result.join('');
+  return result.join('').substring(0, 56); 
 }
 
 function rightRotate(value, amount) {
@@ -223,10 +223,10 @@ function rightRotate(value, amount) {
 }
 
 async function handleTrojanProtocol(ws, msg) {
-  const receivedHash = msg.slice(0, 56).toString();
-  const expectedHash = await sha224(UUID);
+  const receivedHash = msg.slice(0, 56).toString('hex');
+  const expectedHash = await sha224(UUID);  
   if (receivedHash !== expectedHash) {
-    console.error('Trojan password mismatch');
+    console.error('invalid password');
     ws.close();
     return false;
   }
