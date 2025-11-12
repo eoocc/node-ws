@@ -44,8 +44,10 @@ const httpServer = http.createServer((req, res) => {
         });
         return;
   } else if (req.url === `/${SUB_PATH}`) {
-    const vlessURL = `vless://${UUID}@www.visa.com.tw:443?encryption=none&security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;
-    const base64Content = Buffer.from(vlessURL).toString('base64');
+    const vlessURL = `vless://${UUID}@${DOMAIN}:443?encryption=none&security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;
+    const trojanURL = `trojan://${UUID}@${DOMAIN}:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;
+    const combinedContent = `${vlessURL}\n${trojanURL}`;
+    const base64Content = Buffer.from(combinedContent).toString('base64');
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end(base64Content + '\n');
   } else {
@@ -106,42 +108,177 @@ function resolveHost(host) {
 wss.on('connection', ws => {
   // console.log("Connected successfully");
   ws.once('message', msg => {
-    const [VERSION] = msg;
-    const id = msg.slice(1, 17);
-    if (!id.every((v, i) => v == parseInt(uuid.substr(i * 2, 2), 16))) return;
-    let i = msg.slice(17, 18).readUInt8() + 19;
-    const port = msg.slice(i, i += 2).readUInt16BE(0);
-    const ATYP = msg.slice(i, i += 1).readUInt8();
-    const host = ATYP == 1 ? msg.slice(i, i += 4).join('.') :
-    (ATYP == 2 ? new TextDecoder().decode(msg.slice(i + 1, i += 1 + msg.slice(i, i + 1).readUInt8())) :
-    (ATYP == 3 ? msg.slice(i, i += 16).reduce((s, b, i, a) => (i % 2 ? s.concat(a.slice(i - 1, i + 1)) : s), []).map(b => b.readUInt16BE(0).toString(16)).join(':') : ''));
-    // console.log(`Connection from ${host}:${port}`);
-    ws.send(new Uint8Array([VERSION, 0]));
-    const duplex = createWebSocketStream(ws);
-    
-    // Resolve hostname using custom DNS before connecting
-    resolveHost(host)
-      .then(resolvedIP => {
-        console.log(`Resolved ${host} to ${resolvedIP} using custom DNS`);
-        net.connect({ host: resolvedIP, port }, function() {
-          this.write(msg.slice(i));
-          duplex.on('error', () => {}).pipe(this).on('error', () => {}).pipe(duplex);
-        }).on('error', (error) => {
-          console.error(`Connection error to ${resolvedIP}:${port}`, error.message);
-        });
-      })
-      .catch(error => {
-        console.error(`DNS resolution failed for ${host}:`, error.message);
-        // Fallback to system DNS
-        net.connect({ host, port }, function() {
-          this.write(msg.slice(i));
-          duplex.on('error', () => {}).pipe(this).on('error', () => {}).pipe(duplex);
-        }).on('error', (error) => {
-          console.error(`Connection error to ${host}:${port}`, error.message);
-        });
+    if (msg.length >= 58 && msg.slice(56, 58).equals(Buffer.from([0x0d, 0x0a]))) {
+      handleTrojanProtocol(ws, msg).catch(error => {
+        console.error('Error handling Trojan protocol:', error);
+        ws.close();
       });
+    } else {
+      const [VERSION] = msg;
+      const id = msg.slice(1, 17);
+      if (!id.every((v, i) => v == parseInt(uuid.substr(i * 2, 2), 16))) return;
+      let i = msg.slice(17, 18).readUInt8() + 19;
+      const port = msg.slice(i, i += 2).readUInt16BE(0);
+      const ATYP = msg.slice(i, i += 1).readUInt8();
+      const host = ATYP == 1 ? msg.slice(i, i += 4).join('.') :
+      (ATYP == 2 ? new TextDecoder().decode(msg.slice(i + 1, i += 1 + msg.slice(i, i + 1).readUInt8())) :
+      (ATYP == 3 ? msg.slice(i, i += 16).reduce((s, b, i, a) => (i % 2 ? s.concat(a.slice(i - 1, i + 1)) : s), []).map(b => b.readUInt16BE(0).toString(16)).join(':') : ''));
+      // console.log(`Connection from ${host}:${port}`);
+      ws.send(new Uint8Array([VERSION, 0]));
+      const duplex = createWebSocketStream(ws);
+      resolveHost(host)
+        .then(resolvedIP => {
+          // console.log(`Resolved ${host} to ${resolvedIP} using custom DNS`);s
+          net.connect({ host: resolvedIP, port }, function() {
+            this.write(msg.slice(i));
+            duplex.on('error', () => {}).pipe(this).on('error', () => {}).pipe(duplex);
+          }).on('error', (error) => {
+            console.error(`Connection error to ${resolvedIP}:${port}`, error.message);
+          });
+        })
+        .catch(error => {
+          console.error(`DNS resolution failed for ${host}:`, error.message);
+          net.connect({ host, port }, function() {
+            this.write(msg.slice(i));
+            duplex.on('error', () => {}).pipe(this).on('error', () => {}).pipe(duplex);
+          }).on('error', (error) => {
+            console.error(`Connection error to ${host}:${port}`, error.message);
+          });
+        });
+    }
   }).on('error', () => {});
 });
+
+// SHA-224 implementation for Trojan
+async function sha224(text) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text);
+  const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+  let H = [0xc1059ed8, 0x367cd507, 0x3070dd17, 0xf70e5939,0xffc00b31, 0x68581511, 0x64f98fa7, 0xbefa4fa4];
+  const msgLen = data.length;
+  const bitLen = msgLen * 8;
+  const paddedLen = Math.ceil((msgLen + 9) / 64) * 64;
+  const padded = new Uint8Array(paddedLen);
+  padded.set(data);
+  padded[msgLen] = 0x80;
+  const view = new DataView(padded.buffer);
+  view.setUint32(paddedLen - 4, bitLen, false);
+  for (let chunk = 0; chunk < paddedLen; chunk += 64) {
+    const W = new Uint32Array(64);
+    
+    for (let i = 0; i < 16; i++) {
+      W[i] = view.getUint32(chunk + i * 4, false);
+    }
+    
+    for (let i = 16; i < 64; i++) {
+      const s0 = rightRotate(W[i - 15], 7) ^ rightRotate(W[i - 15], 18) ^ (W[i - 15] >>> 3);
+      const s1 = rightRotate(W[i - 2], 17) ^ rightRotate(W[i - 2], 19) ^ (W[i - 2] >>> 10);
+      W[i] = (W[i - 16] + s0 + W[i - 7] + s1) >>> 0;
+    }
+    
+    let [a, b, c, d, e, f, g, h] = H;
+    
+    for (let i = 0; i < 64; i++) {
+      const S1 = rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25);
+      const ch = (e & f) ^ (~e & g);
+      const temp1 = (h + S1 + ch + K[i] + W[i]) >>> 0;
+      const S0 = rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22);
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const temp2 = (S0 + maj) >>> 0;
+      
+      h = g;
+      g = f;
+      f = e;
+      e = (d + temp1) >>> 0;
+      d = c;
+      c = b;
+      b = a;
+      a = (temp1 + temp2) >>> 0;
+    }
+    
+    H[0] = (H[0] + a) >>> 0;
+    H[1] = (H[1] + b) >>> 0;
+    H[2] = (H[2] + c) >>> 0;
+    H[3] = (H[3] + d) >>> 0;
+    H[4] = (H[4] + e) >>> 0;
+    H[5] = (H[5] + f) >>> 0;
+    H[6] = (H[6] + g) >>> 0;
+    H[7] = (H[7] + h) >>> 0;
+  }
+  
+  const result = [];
+  for (let i = 0; i < 7; i++) {
+    result.push(
+      ((H[i] >>> 24) & 0xff).toString(16).padStart(2, '0'),
+      ((H[i] >>> 16) & 0xff).toString(16).padStart(2, '0'),
+      ((H[i] >>> 8) & 0xff).toString(16).padStart(2, '0'),
+      (H[i] & 0xff).toString(16).padStart(2, '0')
+    );
+  }
+  return result.join('');
+}
+
+function rightRotate(value, amount) {
+  return (value >>> amount) | (value << (32 - amount));
+}
+
+async function handleTrojanProtocol(ws, msg) {
+  const receivedHash = msg.slice(0, 56).toString();
+  const expectedHash = await sha224(UUID);
+  if (receivedHash !== expectedHash) {
+    console.error('Trojan password mismatch');
+    ws.close();
+    return false;
+  }
+  let i = 58; // 56 (hash) + 2 (CRLF)
+  const command = msg.slice(i, i + 1).readUInt8();
+  i += 1;
+  const ATYP = msg.slice(i, i + 1).readUInt8();
+  i += 1;
+  let host, port;
+  if (ATYP === 1) { // IPv4
+    host = msg.slice(i, i + 4).join('.');
+    i += 4;
+  } else if (ATYP === 3) { // Domain name
+    const domainLength = msg.slice(i, i + 1).readUInt8();
+    i += 1;
+    host = new TextDecoder().decode(msg.slice(i, i + domainLength));
+    i += domainLength;
+  } else if (ATYP === 4) { // IPv6
+    host = msg.slice(i, i + 16).reduce((s, b, idx, arr) => 
+      (idx % 2 ? s.concat(arr.slice(idx - 1, idx + 1)) : s), [])
+      .map(b => b.readUInt16BE(0).toString(16)).join(':');
+    i += 16;
+  }
+  
+  port = msg.slice(i, i + 2).readUInt16BE(0);
+  i += 2;
+  i += 2;
+  ws.send(new Uint8Array([0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
+  const duplex = createWebSocketStream(ws);
+  
+  resolveHost(host)
+    .then(resolvedIP => {
+      // console.log(`Resolved ${host} to ${resolvedIP} using custom DNS`);
+      net.connect({ host: resolvedIP, port }, function() {
+        this.write(msg.slice(i));
+        duplex.on('error', () => {}).pipe(this).on('error', () => {}).pipe(duplex);
+      }).on('error', (error) => {
+        console.error(`Connection error to ${resolvedIP}:${port}`, error.message);
+      });
+    })
+    .catch(error => {
+      console.error(`DNS resolution failed for ${host}:`, error.message);
+      net.connect({ host, port }, function() {
+        this.write(msg.slice(i));
+        duplex.on('error', () => {}).pipe(this).on('error', () => {}).pipe(duplex);
+      }).on('error', (error) => {
+        console.error(`Connection error to ${host}:${port}`, error.message);
+      });
+    });
+  
+  return true;
+}
 
 const getDownloadUrl = () => {
   const arch = os.arch(); 
