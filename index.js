@@ -613,7 +613,6 @@ httpServer.listen(PORT, () => {
   testTrojanPassword().catch(console.error);
 });
 
-// 添加一个测试函数来验证SHA-224实现
 async function testSHA224() {
   const testInput = "123456";
   const expectedOutput = "8949086575601d601541290782486ed0e113510300d41493ad63741f";
