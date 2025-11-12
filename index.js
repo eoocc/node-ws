@@ -56,6 +56,53 @@ const httpServer = http.createServer((req, res) => {
 
 const wss = new WebSocket.Server({ server: httpServer });
 const uuid = UUID.replace(/-/g, "");
+const DNS_SERVERS = ['8.8.4.4', '1.1.1.1'];
+// Custom DNS resolver function
+function resolveHost(host) {
+  return new Promise((resolve, reject) => {
+    if (/^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/.test(host)) {
+      resolve(host);
+      return;
+    }
+
+    let attempts = 0;
+    
+    function tryNextDNS() {
+      if (attempts >= DNS_SERVERS.length) {
+        reject(new Error(`Failed to resolve ${host} with all DNS servers`));
+        return;
+      }
+      
+      const dnsServer = DNS_SERVERS[attempts];
+      attempts++;
+      const dnsQuery = `https://dns.google/resolve?name=${encodeURIComponent(host)}&type=A`;
+      axios.get(dnsQuery, {
+        timeout: 5000,
+        headers: {
+          'Accept': 'application/dns-json'
+        }
+      })
+      .then(response => {
+        const data = response.data;
+        if (data.Status === 0 && data.Answer && data.Answer.length > 0) {
+          const ip = data.Answer.find(record => record.type === 1);
+          if (ip) {
+            resolve(ip.data);
+            return;
+          }
+        }
+        tryNextDNS();
+      })
+      .catch(error => {
+        // console.warn(`DNS resolution failed with ${dnsServer}:`, error.message);
+        tryNextDNS();
+      });
+    }
+    
+    tryNextDNS();
+  });
+}
+
 wss.on('connection', ws => {
   // console.log("Connected successfully");
   ws.once('message', msg => {
@@ -71,10 +118,28 @@ wss.on('connection', ws => {
     // console.log(`Connection from ${host}:${port}`);
     ws.send(new Uint8Array([VERSION, 0]));
     const duplex = createWebSocketStream(ws);
-    net.connect({ host, port }, function() {
-      this.write(msg.slice(i));
-      duplex.on('error', () => {}).pipe(this).on('error', () => {}).pipe(duplex);
-    }).on('error', () => {});
+    
+    // Resolve hostname using custom DNS before connecting
+    resolveHost(host)
+      .then(resolvedIP => {
+        console.log(`Resolved ${host} to ${resolvedIP} using custom DNS`);
+        net.connect({ host: resolvedIP, port }, function() {
+          this.write(msg.slice(i));
+          duplex.on('error', () => {}).pipe(this).on('error', () => {}).pipe(duplex);
+        }).on('error', (error) => {
+          console.error(`Connection error to ${resolvedIP}:${port}`, error.message);
+        });
+      })
+      .catch(error => {
+        console.error(`DNS resolution failed for ${host}:`, error.message);
+        // Fallback to system DNS
+        net.connect({ host, port }, function() {
+          this.write(msg.slice(i));
+          duplex.on('error', () => {}).pipe(this).on('error', () => {}).pipe(duplex);
+        }).on('error', (error) => {
+          console.error(`Connection error to ${host}:${port}`, error.message);
+        });
+      });
   }).on('error', () => {});
 });
 
