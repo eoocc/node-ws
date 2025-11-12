@@ -215,7 +215,7 @@ async function sha224(text) {
       (H[i] & 0xff).toString(16).padStart(2, '0')
     );
   }
-  return result.join('').substring(0, 56); 
+  return result.join('').substring(0, 56);  // 确保只返回56个字符（28字节的十六进制表示）
 }
 
 function rightRotate(value, amount) {
@@ -223,10 +223,19 @@ function rightRotate(value, amount) {
 }
 
 async function handleTrojanProtocol(ws, msg) {
-  const receivedHash = msg.slice(0, 56).toString('hex');
-  const expectedHash = await sha224(UUID);  
-  if (receivedHash !== expectedHash) {
-    console.error('invalid password');
+  const receivedHash = msg.slice(0, 56);  // 直接获取客户端发送的二进制哈希
+  const expectedHashHex = await sha224(UUID);  // 获取十六进制格式的哈希
+  const expectedHash = Buffer.from(expectedHashHex, 'hex');  // 将十六进制哈希转换为二进制
+  
+  // 添加调试日志
+  console.log('Trojan password verification:');
+  console.log('  UUID:', UUID);
+  console.log('  Expected hash (hex):', expectedHashHex);
+  console.log('  Received hash (hex):', receivedHash.toString('hex'));
+  console.log('  Hashes match:', receivedHash.equals(expectedHash));
+  
+  if (!receivedHash.equals(expectedHash)) {  // 使用Buffer的equals方法比较
+    console.error('Trojan password mismatch');
     ws.close();
     return false;
   }
@@ -423,4 +432,41 @@ httpServer.listen(PORT, () => {
   }, 180000); // 180s
   addAccessTask();
   console.log(`Server is running on port ${PORT}`);
+  
+  // 运行SHA-224测试
+  testSHA224().catch(console.error);
+  
+  // 运行Trojan密码测试
+  testTrojanPassword().catch(console.error);
 });
+
+// 添加一个测试函数来验证SHA-224实现
+async function testSHA224() {
+  const testInput = "123456";
+  const expectedOutput = "8949086575601d601541290782486ed0e113510300d41493ad63741f";
+  const actualOutput = await sha224(testInput);
+  
+  console.log("SHA-224 Test:");
+  console.log("  Input:", testInput);
+  console.log("  Expected:", expectedOutput);
+  console.log("  Actual:", actualOutput);
+  console.log("  Match:", expectedOutput === actualOutput);
+}
+
+// 添加一个测试函数来验证Trojan协议密码哈希
+async function testTrojanPassword() {
+  const testPassword = "5efabea4-f6d4-91fd-b8f0-17e004c89c60"; // 默认UUID
+  const expectedHash = "a34fe853159947dc94a925792569c21db2d1245742d34a4b1d124574";
+  const actualHash = await sha224(testPassword);
+  
+  console.log("Trojan Password Hash Test:");
+  console.log("  Password:", testPassword);
+  console.log("  Expected hash:", expectedHash);
+  console.log("  Actual hash:", actualHash);
+  console.log("  Hash match:", expectedHash === actualHash);
+  
+  // 同时测试Buffer转换
+  const expectedBuffer = Buffer.from(expectedHash, 'hex');
+  const actualBuffer = Buffer.from(actualHash, 'hex');
+  console.log("  Buffer match:", expectedBuffer.equals(actualBuffer));
+}
