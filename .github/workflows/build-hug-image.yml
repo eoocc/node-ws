@@ -2,14 +2,14 @@ name: Build huggingface Image
 
 on:
   push:
-    branches: [ huggingface ]
+    branches: [ hug ]
     paths:
       - 'Dockerfile'
       - 'index.js'
       - 'package.json'
       - 'index.html'
   pull_request:
-    branches: [ huggingface ]
+    branches: [ hug ]
   workflow_dispatch:
 
 jobs:
@@ -23,7 +23,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: huggingface  
+          ref: hug  
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
