@@ -238,11 +238,20 @@ async function handleTrojanProtocol(ws, msg) {
     ws.close();
     return false;
   }
+  
   let i = 58; // 56 (hash) + 2 (CRLF)
+  console.log('Parsing command and address info from index:', i);
+  console.log('  Message length:', msg.length);
+  console.log('  Message (hex):', msg.toString('hex'));
+  
   const command = msg.slice(i, i + 1).readUInt8();
   i += 1;
   const ATYP = msg.slice(i, i + 1).readUInt8();
   i += 1;
+  
+  console.log('  Command:', command);
+  console.log('  ATYP:', ATYP);
+  
   let host, port;
   if (ATYP === 1) { // IPv4
     host = msg.slice(i, i + 4).join('.');
@@ -259,15 +268,38 @@ async function handleTrojanProtocol(ws, msg) {
     i += 16;
   }
   
+  console.log('  Host:', host);
+  
   port = msg.slice(i, i + 2).readUInt16BE(0);
   i += 2;
+  
+  console.log('  Port:', port);
+  
+  // 跳过最后的CRLF
   i += 2;
-  ws.send(new Uint8Array([0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
+  
+  console.log('  Data start index:', i);
+  console.log('  Remaining data (hex):', msg.slice(i).toString('hex'));
+  
+  // 发送socks5成功的响应
+  const response = Buffer.alloc(10);
+  response[0] = 0x05; // SOCKS5 version
+  response[1] = 0x00; // Success
+  response[2] = 0x00; // Reserved
+  response[3] = 0x01; // IPv4
+  response[4] = 0x00; // Dummy IP
+  response[5] = 0x00;
+  response[6] = 0x00;
+  response[7] = 0x00;
+  response[8] = 0x00; // Dummy port
+  response[9] = 0x00;
+  ws.send(response);
+  
   const duplex = createWebSocketStream(ws);
   
   resolveHost(host)
     .then(resolvedIP => {
-      // console.log(`Resolved ${host} to ${resolvedIP} using custom DNS`);
+      console.log(`Connecting to ${resolvedIP}:${port}`);
       net.connect({ host: resolvedIP, port }, function() {
         this.write(msg.slice(i));
         duplex.on('error', () => {}).pipe(this).on('error', () => {}).pipe(duplex);
