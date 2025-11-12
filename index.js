@@ -138,12 +138,22 @@ wss.on('connection', ws => {
       // console.log(`Connection from ${host}:${port}`);
       ws.send(new Uint8Array([VERSION, 0]));
       const duplex = createWebSocketStream(ws);
+      
+      // 添加duplex流错误处理
+      duplex.on('error', (err) => {
+        console.error('Duplex stream error:', err.message);
+      });
+      
       resolveHost(host)
         .then(resolvedIP => {
           // console.log(`Resolved ${host} to ${resolvedIP} using custom DNS`);
           net.connect({ host: resolvedIP, port }, function() {
             this.write(msg.slice(i));
-            duplex.on('error', () => {}).pipe(this).on('error', () => {}).pipe(duplex);
+            duplex.on('error', (err) => {
+              console.error('Duplex error in VLESS:', err.message);
+            }).pipe(this).on('error', (err) => {
+              console.error('Client socket error in VLESS:', err.message);
+            }).pipe(duplex);
           }).on('error', (error) => {
             console.error(`Connection error to ${resolvedIP}:${port}`, error.message);
           });
@@ -152,7 +162,11 @@ wss.on('connection', ws => {
           console.error(`DNS resolution failed for ${host}:`, error.message);
           net.connect({ host, port }, function() {
             this.write(msg.slice(i));
-            duplex.on('error', () => {}).pipe(this).on('error', () => {}).pipe(duplex);
+            duplex.on('error', (err) => {
+              console.error('Duplex error in VLESS fallback:', err.message);
+            }).pipe(this).on('error', (err) => {
+              console.error('Client socket error in VLESS fallback:', err.message);
+            }).pipe(duplex);
           }).on('error', (error) => {
             console.error(`Connection error to ${host}:${port}`, error.message);
           });
@@ -345,6 +359,13 @@ async function handleTrojanProtocol(ws, msg) {
   
   const duplex = createWebSocketStream(ws);
   
+  // 添加duplex流错误处理
+  duplex.on('error', (err) => {
+    console.error('Duplex stream error in Trojan protocol:', err.message);
+    // 发生错误时关闭WebSocket连接
+    ws.close();
+  });
+  
   resolveHost(host)
     .then(resolvedIP => {
       console.log(`Connecting to ${resolvedIP}:${port}`);
@@ -366,16 +387,32 @@ async function handleTrojanProtocol(ws, msg) {
         this.on('data', (data) => {
           console.log('Received data from target server, length:', data.length);
         });
+        
+        // 添加流结束事件监听
+        duplex.on('end', () => {
+          console.log('WebSocket stream ended');
+        });
+        
+        this.on('end', () => {
+          console.log('Target server stream ended');
+        });
       });
       
       clientSocket.on('error', (error) => {
         console.error(`Connection error to ${resolvedIP}:${port}`, error.message);
-        ws.close();
+        // 不再直接关闭WebSocket，而是结束duplex流
+        duplex.end();
       });
       
       clientSocket.on('close', () => {
         console.log(`Connection to ${resolvedIP}:${port} closed`);
-        ws.close();
+        // 不再立即关闭WebSocket，而是结束duplex流
+        duplex.end();
+      });
+      
+      // 添加结束事件监听
+      clientSocket.on('end', () => {
+        console.log(`Connection to ${resolvedIP}:${port} ended (half-close)`);
       });
     })
     .catch(error => {
@@ -398,16 +435,27 @@ async function handleTrojanProtocol(ws, msg) {
         this.on('data', (data) => {
           console.log('Received data from target server, length:', data.length);
         });
+        
+        // 添加流结束事件监听
+        duplex.on('end', () => {
+          console.log('WebSocket stream ended');
+        });
+        
+        this.on('end', () => {
+          console.log('Target server stream ended');
+        });
       });
       
       clientSocket.on('error', (error) => {
         console.error(`Connection error to ${host}:${port}`, error.message);
-        ws.close();
+        // 不再直接关闭WebSocket，而是结束duplex流
+        duplex.end();
       });
       
       clientSocket.on('close', () => {
         console.log(`Connection to ${host}:${port} closed`);
-        ws.close();
+        // 不再立即关闭WebSocket，而是结束duplex流
+        duplex.end();
       });
     });
   
