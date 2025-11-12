@@ -44,8 +44,8 @@ const httpServer = http.createServer((req, res) => {
         });
         return;
   } else if (req.url === `/${SUB_PATH}`) {
-    const vlessURL = `vless://${uuid}@${DOMAIN}:443?encryption=none&security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;
-    const trojanURL = `trojan://${uuid}@${DOMAIN}:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;  // 使用去掉短横线的UUID
+    const vlessURL = `vless://${UUID}@${DOMAIN}:443?encryption=none&security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;
+    const trojanURL = `trojan://${UUID}@${DOMAIN}:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;  
     const combinedContent = `${vlessURL}\n${trojanURL}`;
     const base64Content = Buffer.from(combinedContent).toString('base64');
     res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -236,7 +236,7 @@ function rightRotate(value, amount) {
 
 async function handleTrojanProtocol(ws, msg) {
   const receivedHashHex = msg.slice(0, 56).toString();  // 获取客户端发送的十六进制字符串
-  const expectedHashHex = await sha224(uuid);  // 获取我们计算的十六进制哈希，使用去掉短横线的UUID
+  const expectedHashHex = await sha224(UUID);  // 获取我们计算的十六进制哈希，使用去掉短横线的UUID
   
   // 添加调试日志
   console.log('Trojan password verification:');
