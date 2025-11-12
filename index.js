@@ -151,34 +151,59 @@ wss.on('connection', ws => {
             console.log('Sending data to target server in VLESS, length:', msg.slice(i).length);
             // 先发送初始数据
             this.write(msg.slice(i));
-            // 然后建立双向数据管道
-            duplex.pipe(this).on('error', (err) => {
-              console.error('Client socket error in VLESS:', err.message);
+            
+            // 建立双向数据管道，但使用更精确的错误处理
+            const pipe1 = duplex.pipe(this);
+            const pipe2 = this.pipe(duplex);
+            
+            // 为管道添加错误处理
+            pipe1.on('error', (err) => {
+              console.error('Error piping from WebSocket to target server:', err.message);
             });
-            this.pipe(duplex).on('error', (err) => {
-              console.error('Duplex error in VLESS:', err.message);
+            
+            pipe2.on('error', (err) => {
+              console.error('Error piping from target server to WebSocket:', err.message);
+            });
+            
+            // 添加数据流调试信息
+            duplex.on('data', (data) => {
+              console.log('Received data from WebSocket, length:', data.length);
+            });
+            
+            this.on('data', (data) => {
+              console.log('Received data from target server, length:', data.length);
             });
             
             // 添加流结束事件监听
             duplex.on('end', () => {
-              console.log('WebSocket stream ended in VLESS');
-              console.log('Ending target server connection in VLESS');
-              this.end(); // 当WebSocket流结束时，也结束目标服务器连接
+              console.log('WebSocket stream ended');
+              console.log('Half-closing target server connection');
+              // 使用半关闭而不是完全关闭
+              this.end(); // 当WebSocket流结束时，半关闭目标服务器连接
             });
             
             this.on('end', () => {
-              console.log('Target server stream ended in VLESS');
-              console.log('Ending WebSocket connection in VLESS');
-              duplex.end(); // 当目标服务器流结束时，也结束WebSocket连接
+              console.log('Target server stream ended');
+              console.log('Half-closing WebSocket connection');
+              // 使用半关闭而不是完全关闭
+              duplex.end(); // 当目标服务器流结束时，半关闭WebSocket连接
             });
             
             // 添加流关闭事件监听
             duplex.on('close', () => {
-              console.log('WebSocket stream closed in VLESS');
+              console.log('WebSocket stream closed');
+              // 当WebSocket流关闭时，确保目标服务器连接也关闭
+              if (!this.destroyed) {
+                this.destroy();
+              }
             });
             
             this.on('close', () => {
-              console.log('Target server stream closed in VLESS');
+              console.log('Target server stream closed');
+              // 当目标服务器流关闭时，确保WebSocket连接也关闭
+              if (!duplex.destroyed) {
+                duplex.destroy();
+              }
             });
           })
           .on('error', (error) => {
@@ -191,34 +216,57 @@ wss.on('connection', ws => {
             console.log('Sending data to target server in VLESS fallback, length:', msg.slice(i).length);
             // 先发送初始数据
             this.write(msg.slice(i));
-            // 然后建立双向数据管道
-            duplex.pipe(this).on('error', (err) => {
-              console.error('Client socket error in VLESS fallback:', err.message);
+            
+            // 建立双向数据管道，但使用更精确的错误处理
+            const pipe1 = duplex.pipe(this);
+            const pipe2 = this.pipe(duplex);
+            
+            // 为管道添加错误处理
+            pipe1.on('error', (err) => {
+              console.error('Error piping from WebSocket to target server:', err.message);
             });
-            this.pipe(duplex).on('error', (err) => {
-              console.error('Duplex error in VLESS fallback:', err.message);
+            
+            pipe2.on('error', (err) => {
+              console.error('Error piping from target server to WebSocket:', err.message);
+            });
+            
+            // 添加数据流调试信息
+            duplex.on('data', (data) => {
+              console.log('Received data from WebSocket, length:', data.length);
+            });
+            
+            this.on('data', (data) => {
+              console.log('Received data from target server, length:', data.length);
             });
             
             // 添加流结束事件监听
             duplex.on('end', () => {
-              console.log('WebSocket stream ended in VLESS fallback');
-              console.log('Ending target server connection in VLESS fallback');
+              console.log('WebSocket stream ended');
+              console.log('Ending target server connection');
               this.end(); // 当WebSocket流结束时，也结束目标服务器连接
             });
             
             this.on('end', () => {
-              console.log('Target server stream ended in VLESS fallback');
-              console.log('Ending WebSocket connection in VLESS fallback');
+              console.log('Target server stream ended');
+              console.log('Ending WebSocket connection');
               duplex.end(); // 当目标服务器流结束时，也结束WebSocket连接
             });
             
             // 添加流关闭事件监听
             duplex.on('close', () => {
-              console.log('WebSocket stream closed in VLESS fallback');
+              console.log('WebSocket stream closed');
+              // 当WebSocket流关闭时，确保目标服务器连接也关闭
+              if (!this.destroyed) {
+                this.destroy();
+              }
             });
             
             this.on('close', () => {
-              console.log('Target server stream closed in VLESS fallback');
+              console.log('Target server stream closed');
+              // 当目标服务器流关闭时，确保WebSocket连接也关闭
+              if (!duplex.destroyed) {
+                duplex.destroy();
+              }
             });
           })
           .on('error', (error) => {
@@ -428,12 +476,18 @@ async function handleTrojanProtocol(ws, msg) {
         console.log('Sending data to target server, length:', msg.slice(i).length);
         // 先发送初始数据
         this.write(msg.slice(i));
-        // 然后建立双向数据管道
-        duplex.pipe(this).on('error', (err) => {
-          console.error('Client socket error:', err.message);
+        
+        // 建立双向数据管道，但使用更精确的错误处理
+        const pipe1 = duplex.pipe(this);
+        const pipe2 = this.pipe(duplex);
+        
+        // 为管道添加错误处理
+        pipe1.on('error', (err) => {
+          console.error('Error piping from WebSocket to target server:', err.message);
         });
-        this.pipe(duplex).on('error', (err) => {
-          console.error('Duplex error:', err.message);
+        
+        pipe2.on('error', (err) => {
+          console.error('Error piping from target server to WebSocket:', err.message);
         });
         
         // 添加数据流调试信息
@@ -448,23 +502,33 @@ async function handleTrojanProtocol(ws, msg) {
         // 添加流结束事件监听
         duplex.on('end', () => {
           console.log('WebSocket stream ended');
-          console.log('Ending target server connection');
-          this.end(); // 当WebSocket流结束时，也结束目标服务器连接
+          console.log('Half-closing target server connection');
+          // 使用半关闭而不是完全关闭
+          this.end(); // 当WebSocket流结束时，半关闭目标服务器连接
         });
         
         this.on('end', () => {
           console.log('Target server stream ended');
-          console.log('Ending WebSocket connection');
-          duplex.end(); // 当目标服务器流结束时，也结束WebSocket连接
+          console.log('Half-closing WebSocket connection');
+          // 使用半关闭而不是完全关闭
+          duplex.end(); // 当目标服务器流结束时，半关闭WebSocket连接
         });
         
         // 添加流关闭事件监听
         duplex.on('close', () => {
           console.log('WebSocket stream closed');
+          // 当WebSocket流关闭时，确保目标服务器连接也关闭
+          if (!this.destroyed) {
+            this.destroy();
+          }
         });
         
         this.on('close', () => {
           console.log('Target server stream closed');
+          // 当目标服务器流关闭时，确保WebSocket连接也关闭
+          if (!duplex.destroyed) {
+            duplex.destroy();
+          }
         });
       });
       
@@ -492,12 +556,18 @@ async function handleTrojanProtocol(ws, msg) {
         console.log('Sending data to target server, length:', msg.slice(i).length);
         // 先发送初始数据
         this.write(msg.slice(i));
-        // 然后建立双向数据管道
-        duplex.pipe(this).on('error', (err) => {
-          console.error('Client socket error:', err.message);
+        
+        // 建立双向数据管道，但使用更精确的错误处理
+        const pipe1 = duplex.pipe(this);
+        const pipe2 = this.pipe(duplex);
+        
+        // 为管道添加错误处理
+        pipe1.on('error', (err) => {
+          console.error('Error piping from WebSocket to target server:', err.message);
         });
-        this.pipe(duplex).on('error', (err) => {
-          console.error('Duplex error:', err.message);
+        
+        pipe2.on('error', (err) => {
+          console.error('Error piping from target server to WebSocket:', err.message);
         });
         
         // 添加数据流调试信息
