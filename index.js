@@ -51,7 +51,7 @@ const httpServer = http.createServer((req, res) => {
   } else if (req.url === `/${SUB_PATH}`) {
     // 生成 VLESS 和 Trojan 订阅
     const vlessURL = `vless://${UUID}@www.visa.com.tw:443?encryption=none&security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}%3Fed%3D2048#${NAME}-VLESS-${ISP}`;
-    const trojanURL = `trojan://${trojanPassword}@www.visa.com.tw:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}%3Fed%3D2048#${NAME}-Trojan-${ISP}`;
+    const trojanURL = `trojan://${encodeURIComponent(UUID)}@www.visa.com.tw:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}%3Fed%3D2048#${NAME}-Trojan-${ISP}`;
     
     const subscription = vlessURL + '\n' + trojanURL;
     const base64Content = Buffer.from(subscription).toString('base64');
@@ -415,6 +415,14 @@ httpServer.listen(PORT, () => {
   addAccessTask();
   console.log(`Server is running on port ${PORT}`);
   console.log(`WebSocket Path: /${WSPATH}`);
-  console.log(`Trojan Password (use in client): ${trojanPassword}`);
-  console.log(`Trojan Password Hash (SHA224): ${crypto.createHash('sha224').update(trojanPassword).digest('hex')}`);
+  console.log(`UUID: ${UUID}`);
+  console.log(`Trojan Password (same as UUID): ${trojanPassword}`);
+  console.log(`Expected Trojan Hash: ${crypto.createHash('sha224').update(trojanPassword).digest('hex')}`);
+  
+  // 测试一下客户端发来的哈希对应的原始密码
+  const receivedHash = 'bdbe74a79eae792452540eac9cd658b26d1f912c9048f7cede544cca';
+  console.log(`Received hash from client: ${receivedHash}`);
+  // 尝试用不同格式验证
+  console.log(`Test hash of UUID: ${crypto.createHash('sha224').update(UUID).digest('hex')}`);
+  console.log(`Test hash of UUID (no dashes): ${crypto.createHash('sha224').update(UUID.replace(/-/g, '')).digest('hex')}`);
 });
