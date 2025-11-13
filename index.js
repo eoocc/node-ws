@@ -32,8 +32,8 @@ const GetISP = async () => {
 }
 GetISP();
 
-// 生成 Trojan 密码 (使用 UUID 的 SHA224 哈希)
-const trojanPassword = crypto.createHash('sha224').update(UUID).digest('hex');
+// 生成 Trojan 密码 (直接使用 UUID 作为密码，客户端会自动做 SHA224)
+const trojanPassword = UUID;
 
 const httpServer = http.createServer((req, res) => {
   if (req.url === '/') {
@@ -118,6 +118,7 @@ function handleVlessConnection(ws, msg) {
   const [VERSION] = msg;
   const id = msg.slice(1, 17);
   if (!id.every((v, i) => v == parseInt(uuid.substr(i * 2, 2), 16))) return false;
+  
   let i = msg.slice(17, 18).readUInt8() + 19;
   const port = msg.slice(i, i += 2).readUInt16BE(0);
   const ATYP = msg.slice(i, i += 1).readUInt8();
@@ -154,11 +155,19 @@ function handleVlessConnection(ws, msg) {
 // Trojan 协议处理
 function handleTrojanConnection(ws, msg) {
   try {
+    // Trojan 请求格式: password_hash(56字节hex SHA224) + CRLF + CMD(1) + ATYP(1) + DST.ADDR + DST.PORT(2) + CRLF + Payload
+    // 客户端会将密码做 SHA224 后发送
+    
+    // 检查密码（前56个字节应该是hex密码）
     if (msg.length < 58) return false;
-    const receivedPassword = msg.slice(0, 56).toString();
-    if (receivedPassword !== trojanPassword) {
-      console.log('[Trojan] Invalid password, received:', receivedPassword.slice(0, 20) + '...');
-      console.log('[Trojan] Expected:', trojanPassword.slice(0, 20) + '...');
+    
+    const receivedPasswordHash = msg.slice(0, 56).toString();
+    const expectedPasswordHash = crypto.createHash('sha224').update(trojanPassword).digest('hex');
+    
+    if (receivedPasswordHash !== expectedPasswordHash) {
+      console.log('[Trojan] Invalid password');
+      console.log('[Trojan] Received hash:', receivedPasswordHash);
+      console.log('[Trojan] Expected hash:', expectedPasswordHash);
       return false;
     }
     
@@ -244,11 +253,13 @@ function handleTrojanConnection(ws, msg) {
 
 wss.on('connection', (ws, req) => {
   const url = req.url || '';
-  // vle-ss处理
+  
   ws.once('message', msg => {
+    // 先尝试 VLESS 协议（检查第一个字节是否为版本号和UUID匹配）
     if (msg.length > 17 && msg[0] === 0) {
       const id = msg.slice(1, 17);
       const isVless = id.every((v, i) => v == parseInt(uuid.substr(i * 2, 2), 16));
+      
       if (isVless) {
         if (!handleVlessConnection(ws, msg)) {
           ws.close();
@@ -257,7 +268,7 @@ wss.on('connection', (ws, req) => {
       }
     }
     
-    // Tro-jan处理
+    // 尝试 Trojan 协议
     if (!handleTrojanConnection(ws, msg)) {
       ws.close();
     }
@@ -404,5 +415,6 @@ httpServer.listen(PORT, () => {
   addAccessTask();
   console.log(`Server is running on port ${PORT}`);
   console.log(`WebSocket Path: /${WSPATH}`);
-  console.log(`Trojan Password: ${trojanPassword}`);
+  console.log(`Trojan Password (use in client): ${trojanPassword}`);
+  console.log(`Trojan Password Hash (SHA224): ${crypto.createHash('sha224').update(trojanPassword).digest('hex')}`);
 });
