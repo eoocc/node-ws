@@ -47,7 +47,7 @@ const httpServer = http.createServer((req, res) => {
     return;
   } else if (req.url === `/${SUB_PATH}`) {
     const vlessURL = `vless://${UUID}@www.visa.com.tw:443?encryption=none&security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;
-    const trojanURL = `trojan://${encodeURIComponent(UUID)}@www.visa.com.tw:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;
+    const trojanURL = `trojan://${UUID}@www.visa.com.tw:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-${ISP}`;
     const subscription = vlessURL + '\n' + trojanURL;
     const base64Content = Buffer.from(subscription).toString('base64');
     
