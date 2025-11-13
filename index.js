@@ -137,140 +137,87 @@ wss.on('connection', ws => {
       (ATYP == 3 ? msg.slice(i, i += 16).reduce((s, b, i, a) => (i % 2 ? s.concat(a.slice(i - 1, i + 1)) : s), []).map(b => b.readUInt16BE(0).toString(16)).join(':') : ''));
       // console.log(`Connection from ${host}:${port}`);
       ws.send(new Uint8Array([VERSION, 0]));
-      const duplex = createWebSocketStream(ws);
-      
-      // 添加duplex流错误处理
-      duplex.on('error', (err) => {
-        console.error('Duplex stream error:', err.message);
-      });
       
       resolveHost(host)
         .then(resolvedIP => {
           // console.log(`Resolved ${host} to ${resolvedIP} using custom DNS`);
           net.connect({ host: resolvedIP, port }, function() {
-            console.log('Sending data to target server in VLESS, length:', msg.slice(i).length);
-            // 先发送初始数据
+            console.log('Sending initial data to target server in VLESS, length:', msg.slice(i).length);
+            // 发送初始数据
             this.write(msg.slice(i));
-            
-            // 建立双向数据管道，但使用更精确的错误处理
-            const pipe1 = duplex.pipe(this);
-            const pipe2 = this.pipe(duplex);
-            
-            // 为管道添加错误处理
-            pipe1.on('error', (err) => {
-              console.error('Error piping from WebSocket to target server:', err.message);
+            ws.on('message', (data) => {
+              console.log('Forwarding data from WebSocket to target server in VLESS, length:', data.length);
+              try {
+                if (!this.destroyed) {
+                  this.write(data);
+                }
+              } catch (err) {
+                console.error('Error writing to target server in VLESS:', err.message);
+              }
             });
             
-            pipe2.on('error', (err) => {
-              console.error('Error piping from target server to WebSocket:', err.message);
-            });
-            
-            // 添加数据流调试信息
-            duplex.on('data', (data) => {
-              console.log('Received data from WebSocket, length:', data.length);
-            });
-            
+            // Target Server -> WebSocket
             this.on('data', (data) => {
-              console.log('Received data from target server, length:', data.length);
-            });
-            
-            // 添加流结束事件监听
-            duplex.on('end', () => {
-              console.log('WebSocket stream ended');
-              console.log('Half-closing target server connection');
-              // 使用半关闭而不是完全关闭
-              this.end(); // 当WebSocket流结束时，半关闭目标服务器连接
-            });
-            
-            this.on('end', () => {
-              console.log('Target server stream ended');
-              console.log('Half-closing WebSocket connection');
-              // 使用半关闭而不是完全关闭
-              duplex.end(); // 当目标服务器流结束时，半关闭WebSocket连接
-            });
-            
-            // 添加流关闭事件监听
-            duplex.on('close', () => {
-              console.log('WebSocket stream closed');
-              // 当WebSocket流关闭时，确保目标服务器连接也关闭
-              if (!this.destroyed) {
-                this.destroy();
+              console.log('Forwarding data from target server to WebSocket in VLESS, length:', data.length);
+              try {
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(data);
+                }
+              } catch (err) {
+                console.error('Error sending data to WebSocket in VLESS:', err.message);
               }
             });
-            
-            this.on('close', () => {
-              console.log('Target server stream closed');
-              // 当目标服务器流关闭时，确保WebSocket连接也关闭
-              if (!duplex.destroyed) {
-                duplex.destroy();
-              }
-            });
-          })
-          .on('error', (error) => {
+          }).on('error', (error) => {
             console.error(`Connection error to ${resolvedIP}:${port}`, error.message);
+            ws.close();
+          });
+          
+          // 连接关闭处理
+          net.connect({ host: resolvedIP, port }).on('close', () => {
+            console.log(`Connection to ${resolvedIP}:${port} closed in VLESS`);
+            ws.close();
           });
         })
         .catch(error => {
           console.error(`DNS resolution failed for ${host}:`, error.message);
           net.connect({ host, port }, function() {
-            console.log('Sending data to target server in VLESS fallback, length:', msg.slice(i).length);
-            // 先发送初始数据
+            console.log('Sending initial data to target server in VLESS fallback, length:', msg.slice(i).length);
+            // 发送初始数据
             this.write(msg.slice(i));
             
-            // 建立双向数据管道，但使用更精确的错误处理
-            const pipe1 = duplex.pipe(this);
-            const pipe2 = this.pipe(duplex);
-            
-            // 为管道添加错误处理
-            pipe1.on('error', (err) => {
-              console.error('Error piping from WebSocket to target server:', err.message);
+            // 建立双向数据管道 - 参考trojan.js的实现
+            // WebSocket -> Target Server
+            ws.on('message', (data) => {
+              console.log('Forwarding data from WebSocket to target server in VLESS fallback, length:', data.length);
+              try {
+                if (!this.destroyed) {
+                  this.write(data);
+                }
+              } catch (err) {
+                console.error('Error writing to target server in VLESS fallback:', err.message);
+              }
             });
             
-            pipe2.on('error', (err) => {
-              console.error('Error piping from target server to WebSocket:', err.message);
-            });
-            
-            // 添加数据流调试信息
-            duplex.on('data', (data) => {
-              console.log('Received data from WebSocket, length:', data.length);
-            });
-            
+            // Target Server -> WebSocket
             this.on('data', (data) => {
-              console.log('Received data from target server, length:', data.length);
-            });
-            
-            // 添加流结束事件监听
-            duplex.on('end', () => {
-              console.log('WebSocket stream ended');
-              console.log('Ending target server connection');
-              this.end(); // 当WebSocket流结束时，也结束目标服务器连接
-            });
-            
-            this.on('end', () => {
-              console.log('Target server stream ended');
-              console.log('Ending WebSocket connection');
-              duplex.end(); // 当目标服务器流结束时，也结束WebSocket连接
-            });
-            
-            // 添加流关闭事件监听
-            duplex.on('close', () => {
-              console.log('WebSocket stream closed');
-              // 当WebSocket流关闭时，确保目标服务器连接也关闭
-              if (!this.destroyed) {
-                this.destroy();
+              console.log('Forwarding data from target server to WebSocket in VLESS fallback, length:', data.length);
+              try {
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(data);
+                }
+              } catch (err) {
+                console.error('Error sending data to WebSocket in VLESS fallback:', err.message);
               }
             });
-            
-            this.on('close', () => {
-              console.log('Target server stream closed');
-              // 当目标服务器流关闭时，确保WebSocket连接也关闭
-              if (!duplex.destroyed) {
-                duplex.destroy();
-              }
-            });
-          })
-          .on('error', (error) => {
+          }).on('error', (error) => {
             console.error(`Connection error to ${host}:${port}`, error.message);
+            ws.close();
+          });
+          
+          // 连接关闭处理
+          net.connect({ host, port }).on('close', () => {
+            console.log(`Connection to ${host}:${port} closed in VLESS fallback`);
+            ws.close();
           });
         });
     }
@@ -459,159 +406,101 @@ async function handleTrojanProtocol(ws, msg) {
   ws.send(response);
   console.log('Sent SOCKS5 response to client');
   
-  const duplex = createWebSocketStream(ws);
-  
-  // 添加duplex流错误处理
-  duplex.on('error', (err) => {
-    console.error('Duplex stream error in Trojan protocol:', err.message);
-    // 发生错误时关闭WebSocket连接
-    ws.close();
-  });
-  
+  // 解析主机名并建立连接
   resolveHost(host)
     .then(resolvedIP => {
       console.log(`Connecting to ${resolvedIP}:${port}`);
       const clientSocket = net.connect({ host: resolvedIP, port }, function() {
         console.log(`Successfully connected to ${resolvedIP}:${port}`);
-        console.log('Sending data to target server, length:', msg.slice(i).length);
-        // 先发送初始数据
+        console.log('Sending initial data to target server, length:', msg.slice(i).length);
+        
+        // 发送初始数据（TLS握手数据）
         this.write(msg.slice(i));
         
-        // 建立双向数据管道，但使用更精确的错误处理
-        const pipe1 = duplex.pipe(this);
-        const pipe2 = this.pipe(duplex);
-        
-        // 为管道添加错误处理
-        pipe1.on('error', (err) => {
-          console.error('Error piping from WebSocket to target server:', err.message);
-        });
-        
-        pipe2.on('error', (err) => {
-          console.error('Error piping from target server to WebSocket:', err.message);
-        });
-        
-        // 添加数据流调试信息
-        duplex.on('data', (data) => {
-          console.log('Received data from WebSocket, length:', data.length);
-        });
-        
-        this.on('data', (data) => {
-          console.log('Received data from target server, length:', data.length);
-        });
-        
-        // 添加流结束事件监听
-        duplex.on('end', () => {
-          console.log('WebSocket stream ended');
-          console.log('Half-closing target server connection');
-          // 使用半关闭而不是完全关闭
-          this.end(); // 当WebSocket流结束时，半关闭目标服务器连接
-        });
-        
-        this.on('end', () => {
-          console.log('Target server stream ended');
-          console.log('Half-closing WebSocket connection');
-          // 使用半关闭而不是完全关闭
-          duplex.end(); // 当目标服务器流结束时，半关闭WebSocket连接
-        });
-        
-        // 添加流关闭事件监听
-        duplex.on('close', () => {
-          console.log('WebSocket stream closed');
-          // 当WebSocket流关闭时，确保目标服务器连接也关闭
-          if (!this.destroyed) {
-            this.destroy();
+        // 建立双向数据管道 - 参考trojan.js的实现
+        // WebSocket -> Target Server
+        ws.on('message', (data) => {
+          console.log('Forwarding data from WebSocket to target server, length:', data.length);
+          try {
+            if (!this.destroyed) {
+              this.write(data);
+            }
+          } catch (err) {
+            console.error('Error writing to target server:', err.message);
           }
         });
         
-        this.on('close', () => {
-          console.log('Target server stream closed');
-          // 当目标服务器流关闭时，确保WebSocket连接也关闭
-          if (!duplex.destroyed) {
-            duplex.destroy();
+        // Target Server -> WebSocket
+        this.on('data', (data) => {
+          console.log('Forwarding data from target server to WebSocket, length:', data.length);
+          try {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(data);
+            }
+          } catch (err) {
+            console.error('Error sending data to WebSocket:', err.message);
           }
         });
       });
       
+      // 错误处理
       clientSocket.on('error', (error) => {
         console.error(`Connection error to ${resolvedIP}:${port}`, error.message);
-        // 不再直接关闭WebSocket，而是结束duplex流
-        duplex.end();
+        ws.close();
       });
       
+      // 连接关闭处理
       clientSocket.on('close', () => {
         console.log(`Connection to ${resolvedIP}:${port} closed`);
-        // 不再立即关闭WebSocket，而是结束duplex流
-        duplex.end();
-      });
-      
-      // 添加结束事件监听
-      clientSocket.on('end', () => {
-        console.log(`Connection to ${resolvedIP}:${port} ended (half-close)`);
+        ws.close();
       });
     })
     .catch(error => {
       console.error(`DNS resolution failed for ${host}:`, error.message);
+      // DNS解析失败时直接连接原始主机名
       const clientSocket = net.connect({ host, port }, function() {
         console.log(`Successfully connected to ${host}:${port} (fallback)`);
-        console.log('Sending data to target server, length:', msg.slice(i).length);
-        // 先发送初始数据
+        console.log('Sending initial data to target server, length:', msg.slice(i).length);
+        
+        // 发送初始数据（TLS握手数据）
         this.write(msg.slice(i));
         
-        // 建立双向数据管道，但使用更精确的错误处理
-        const pipe1 = duplex.pipe(this);
-        const pipe2 = this.pipe(duplex);
-        
-        // 为管道添加错误处理
-        pipe1.on('error', (err) => {
-          console.error('Error piping from WebSocket to target server:', err.message);
+        // 建立双向数据管道 - 参考trojan.js的实现
+        // WebSocket -> Target Server
+        ws.on('message', (data) => {
+          console.log('Forwarding data from WebSocket to target server, length:', data.length);
+          try {
+            if (!this.destroyed) {
+              this.write(data);
+            }
+          } catch (err) {
+            console.error('Error writing to target server:', err.message);
+          }
         });
         
-        pipe2.on('error', (err) => {
-          console.error('Error piping from target server to WebSocket:', err.message);
-        });
-        
-        // 添加数据流调试信息
-        duplex.on('data', (data) => {
-          console.log('Received data from WebSocket, length:', data.length);
-        });
-        
+        // Target Server -> WebSocket
         this.on('data', (data) => {
-          console.log('Received data from target server, length:', data.length);
-        });
-        
-        // 添加流结束事件监听
-        duplex.on('end', () => {
-          console.log('WebSocket stream ended');
-          console.log('Ending target server connection');
-          this.end(); // 当WebSocket流结束时，也结束目标服务器连接
-        });
-        
-        this.on('end', () => {
-          console.log('Target server stream ended');
-          console.log('Ending WebSocket connection');
-          duplex.end(); // 当目标服务器流结束时，也结束WebSocket连接
-        });
-        
-        // 添加流关闭事件监听
-        duplex.on('close', () => {
-          console.log('WebSocket stream closed');
-        });
-        
-        this.on('close', () => {
-          console.log('Target server stream closed');
+          console.log('Forwarding data from target server to WebSocket, length:', data.length);
+          try {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(data);
+            }
+          } catch (err) {
+            console.error('Error sending data to WebSocket:', err.message);
+          }
         });
       });
       
+      // 错误处理
       clientSocket.on('error', (error) => {
         console.error(`Connection error to ${host}:${port}`, error.message);
-        // 不再直接关闭WebSocket，而是结束duplex流
-        duplex.end();
+        ws.close();
       });
       
+      // 连接关闭处理
       clientSocket.on('close', () => {
         console.log(`Connection to ${host}:${port} closed`);
-        // 不再立即关闭WebSocket，而是结束duplex流
-        duplex.end();
+        ws.close();
       });
     });
   
