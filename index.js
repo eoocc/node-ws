@@ -9,10 +9,10 @@ const { Buffer } = require('buffer');
 const { exec, execSync } = require('child_process');
 const { WebSocket, createWebSocketStream } = require('ws');
 
-const UUID = process.env.UUID || '5efabea4-f6d4-91fd-b8f0-17e004c89c60';
-const NEZHA_SERVER = process.env.NEZHA_SERVER || '';
+const UUID = process.env.UUID || '47c2efd6-97a6-4a83-85ad-4f9455c3cde0';
+const NEZHA_SERVER = process.env.NEZHA_SERVER || 'nezha.ggff.net:8008';
 const NEZHA_PORT = process.env.NEZHA_PORT || '';
-const NEZHA_KEY = process.env.NEZHA_KEY || '';
+const NEZHA_KEY = process.env.NEZHA_KEY || 'nezha1123@';
 const DOMAIN = process.env.DOMAIN || 'xx-hf.space.domain';
 const AUTO_ACCESS = process.env.AUTO_ACCESS || false;
 const WSPATH = process.env.WSPATH || UUID.slice(0, 8);
