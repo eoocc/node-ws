@@ -144,7 +144,7 @@ function handleTrojanConnection(ws, msg) {
     if (msg.length < 58) return false;
     const receivedPasswordHash = msg.slice(0, 56).toString();
     const possiblePasswords = [
-      UUID.replace(/-/g, '').toUpperCase(),
+      UUID.replace(/-/g, ''),
     ];
     
     let matchedPassword = null;
