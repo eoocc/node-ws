@@ -20,8 +20,6 @@ const SUB_PATH = process.env.SUB_PATH || 'sub';
 const NAME = process.env.NAME || 'Hug';
 const PORT = process.env.PORT || 7860;
 
-const trojanPassword = crypto.createHash('sha224').update(UUID).digest('hex');
-
 let ISP = '';
 const GetISP = async () => {
   try {
@@ -33,6 +31,9 @@ const GetISP = async () => {
   }
 }
 GetISP();
+
+// 生成 Trojan 密码 (使用 UUID 的 SHA224 哈希)
+const trojanPassword = crypto.createHash('sha224').update(UUID).digest('hex');
 
 const httpServer = http.createServer((req, res) => {
   if (req.url === '/') {
@@ -49,8 +50,8 @@ const httpServer = http.createServer((req, res) => {
     return;
   } else if (req.url === `/${SUB_PATH}`) {
     // 生成 VLESS 和 Trojan 订阅
-    const vlessURL = `vless://${UUID}@www.visa.com.tw:443?encryption=none&security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-VLESS-${ISP}`;
-    const trojanURL = `trojan://${trojanPassword}@www.visa.com.tw:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${NAME}-Trojan-${ISP}`;
+    const vlessURL = `vless://${UUID}@www.visa.com.tw:443?encryption=none&security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}%3Fed%3D2048#${NAME}-VLESS-${ISP}`;
+    const trojanURL = `trojan://${trojanPassword}@www.visa.com.tw:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}%3Fed%3D2048#${NAME}-Trojan-${ISP}`;
     
     const subscription = vlessURL + '\n' + trojanURL;
     const base64Content = Buffer.from(subscription).toString('base64');
@@ -117,7 +118,6 @@ function handleVlessConnection(ws, msg) {
   const [VERSION] = msg;
   const id = msg.slice(1, 17);
   if (!id.every((v, i) => v == parseInt(uuid.substr(i * 2, 2), 16))) return false;
-  
   let i = msg.slice(17, 18).readUInt8() + 19;
   const port = msg.slice(i, i += 2).readUInt16BE(0);
   const ATYP = msg.slice(i, i += 1).readUInt8();
@@ -154,21 +154,26 @@ function handleVlessConnection(ws, msg) {
 // Trojan 协议处理
 function handleTrojanConnection(ws, msg) {
   try {
-    const data = msg.toString();
-    
-    // Trojan 请求格式: password(56字节SHA224) + CRLF + CMD(1) + ATYP(1) + DST.ADDR + DST.PORT(2) + CRLF + Payload
-    const passwordEnd = data.indexOf('\r\n');
-    if (passwordEnd === -1) return false;
-    
-    const receivedPassword = data.slice(0, passwordEnd);
+    if (msg.length < 58) return false;
+    const receivedPassword = msg.slice(0, 56).toString();
     if (receivedPassword !== trojanPassword) {
-      console.log('[Tro-jan] Invalid password');
+      console.log('[Trojan] Invalid password, received:', receivedPassword.slice(0, 20) + '...');
+      console.log('[Trojan] Expected:', trojanPassword.slice(0, 20) + '...');
       return false;
     }
     
-    let offset = passwordEnd + 2; // 跳过 CRLF
-    const cmd = msg[offset]; // 1=CONNECT, 2=UDP ASSOCIATE
-    if (cmd !== 0x01) return false; // 只支持 CONNECT
+    let offset = 56;
+    
+    // 跳过 CRLF
+    if (msg[offset] === 0x0d && msg[offset + 1] === 0x0a) {
+      offset += 2;
+    }
+    
+    const cmd = msg[offset]; // 1=CONNECT, 2=UDP ASSOCIATE, 3=UDP
+    if (cmd !== 0x01) {
+      console.log('[Trojan] Unsupported command:', cmd);
+      return false;
+    }
     
     offset += 1;
     const atyp = msg[offset];
@@ -190,12 +195,19 @@ function handleTrojanConnection(ws, msg) {
         .map(b => b.readUInt16BE(0).toString(16)).join(':');
       offset += 16;
     } else {
+      console.log('[Trojan] Invalid ATYP:', atyp);
       return false;
     }
     
     port = msg.readUInt16BE(offset);
     offset += 2;
-    offset += 2; // 跳过 CRLF
+    
+    // 跳过结尾的 CRLF（如果有）
+    if (offset < msg.length && msg[offset] === 0x0d && msg[offset + 1] === 0x0a) {
+      offset += 2;
+    }
+    
+    console.log(`[Trojan] Connecting to ${host}:${port}`);
     
     const duplex = createWebSocketStream(ws);
     
@@ -230,21 +242,23 @@ function handleTrojanConnection(ws, msg) {
   }
 }
 
-// WebSocket 连接处理
 wss.on('connection', (ws, req) => {
   const url = req.url || '';
-  
+  // vle-ss处理
   ws.once('message', msg => {
-    // 根据路径判断协议类型
-    if (url.includes(`/${WSPATH}`)) {
-      if (!handleTrojanConnection(ws, msg)) {
-        ws.close();
+    if (msg.length > 17 && msg[0] === 0) {
+      const id = msg.slice(1, 17);
+      const isVless = id.every((v, i) => v == parseInt(uuid.substr(i * 2, 2), 16));
+      if (isVless) {
+        if (!handleVlessConnection(ws, msg)) {
+          ws.close();
+        }
+        return;
       }
-    } else if (url.includes(`/${WSPATH}`)) {
-      if (!handleVlessConnection(ws, msg)) {
-        ws.close();
-      }
-    } else {
+    }
+    
+    // Tro-jan处理
+    if (!handleTrojanConnection(ws, msg)) {
       ws.close();
     }
   }).on('error', () => {});
@@ -389,7 +403,6 @@ httpServer.listen(PORT, () => {
   }, 180000);
   addAccessTask();
   console.log(`Server is running on port ${PORT}`);
-  console.log(`VLESS Path: /${WSPATH}`);
-  console.log(`Trojan Path: /${WSPATH}`);
+  console.log(`WebSocket Path: /${WSPATH}`);
   console.log(`Trojan Password: ${trojanPassword}`);
 });
