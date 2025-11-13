@@ -162,14 +162,35 @@ function handleTrojanConnection(ws, msg) {
     if (msg.length < 58) return false;
     
     const receivedPasswordHash = msg.slice(0, 56).toString();
-    const expectedPasswordHash = crypto.createHash('sha224').update(trojanPassword).digest('hex');
     
-    if (receivedPasswordHash !== expectedPasswordHash) {
+    // 尝试多种密码格式
+    const possiblePasswords = [
+      UUID,                              // 原始 UUID
+      UUID.replace(/-/g, ''),           // 无短横线
+      UUID.toUpperCase(),                // 大写
+      UUID.replace(/-/g, '').toUpperCase(), // 无短横线大写
+      trojanPassword,                    // trojanPassword 变量
+    ];
+    
+    let matchedPassword = null;
+    for (const pwd of possiblePasswords) {
+      const hash = crypto.createHash('sha224').update(pwd).digest('hex');
+      if (hash === receivedPasswordHash) {
+        matchedPassword = pwd;
+        break;
+      }
+    }
+    
+    if (!matchedPassword) {
       console.log('[Trojan] Invalid password');
       console.log('[Trojan] Received hash:', receivedPasswordHash);
-      console.log('[Trojan] Expected hash:', expectedPasswordHash);
+      console.log('[Trojan] Tried passwords:', possiblePasswords.map(p => {
+        return `"${p}" -> ${crypto.createHash('sha224').update(p).digest('hex')}`;
+      }).join('\n                           '));
       return false;
     }
+    
+    console.log(`[Trojan] Password matched with format: "${matchedPassword}"`);
     
     let offset = 56;
     
@@ -416,13 +437,21 @@ httpServer.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
   console.log(`WebSocket Path: /${WSPATH}`);
   console.log(`UUID: ${UUID}`);
-  console.log(`Trojan Password (same as UUID): ${trojanPassword}`);
-  console.log(`Expected Trojan Hash: ${crypto.createHash('sha224').update(trojanPassword).digest('hex')}`);
   
-  // 测试一下客户端发来的哈希对应的原始密码
-  const receivedHash = 'bdbe74a79eae792452540eac9cd658b26d1f912c9048f7cede544cca';
-  console.log(`Received hash from client: ${receivedHash}`);
-  // 尝试用不同格式验证
-  console.log(`Test hash of UUID: ${crypto.createHash('sha224').update(UUID).digest('hex')}`);
-  console.log(`Test hash of UUID (no dashes): ${crypto.createHash('sha224').update(UUID.replace(/-/g, '')).digest('hex')}`);
+  // 尝试各种可能的密码格式
+  const testPasswords = [
+    UUID,
+    UUID.replace(/-/g, ''),
+    UUID.toUpperCase(),
+    UUID.replace(/-/g, '').toUpperCase(),
+    trojanPassword,
+  ];
+  
+  console.log('\nTesting different password formats:');
+  testPasswords.forEach((pwd, idx) => {
+    const hash = crypto.createHash('sha224').update(pwd).digest('hex');
+    console.log(`${idx + 1}. "${pwd}" -> ${hash}`);
+  });
+  
+  console.log(`\nExpected hash from client: bdbe74a79eae792452540eac9cd658b26d1f912c9048f7cede544cca`);
 });
